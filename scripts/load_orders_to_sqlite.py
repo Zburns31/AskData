@@ -22,6 +22,7 @@ COLUMNS = [
 
 
 def create_orders_table(connection: sqlite3.Connection) -> None:
+    """Recreate the orders table so the load starts from a known schema."""
     connection.execute(f"DROP TABLE IF EXISTS {TABLE_NAME}")
     connection.execute(f"""
         CREATE TABLE {TABLE_NAME} (
@@ -38,10 +39,12 @@ def create_orders_table(connection: sqlite3.Connection) -> None:
 
 
 def normalize_row(row: dict[str, str]) -> tuple[str | None, ...]:
+    """Convert CSV dict values into the ordered tuple expected by INSERTs."""
     return tuple(row[column] or None for column in COLUMNS)
 
 
 def load_orders(connection: sqlite3.Connection, csv_path: Path) -> int:
+    """Read the CSV file, normalize each row, and bulk insert it into SQLite."""
     with csv_path.open(newline="", encoding="utf-8") as handle:
         reader = csv.DictReader(handle)
         rows = [normalize_row(row) for row in reader]
@@ -56,6 +59,7 @@ def load_orders(connection: sqlite3.Connection, csv_path: Path) -> int:
 
 
 def fetch_status_counts(connection: sqlite3.Connection) -> list[tuple[str, int]]:
+    """Run a sample aggregate query used to verify the loaded table contents."""
     cursor = connection.execute(f"""
         SELECT order_status, COUNT(*) AS order_count
         FROM {TABLE_NAME}
@@ -66,6 +70,7 @@ def fetch_status_counts(connection: sqlite3.Connection) -> list[tuple[str, int]]
 
 
 def main() -> None:
+    """Build the SQLite database from CSV and print a small verification report."""
     if not CSV_PATH.exists():
         raise FileNotFoundError(f"Could not find source CSV at {CSV_PATH}")
 

@@ -8,14 +8,18 @@ from typing import Any, Callable
 import pandas as pd
 from pandas.testing import assert_frame_equal
 
-from askdata.agents import DataEngineerAgent, QueryExecutionResult
-from askdata.database import OrdersDatabase
+from askdata.agents import (
+    DataEngineerAgent,
+    DataEngineerAgentError,
+    QueryExecutionResult,
+)
+from askdata.storage.database import OrdersDatabase
 from evals.cases import DEFAULT_EVAL_CASES, EvalCase
 
 
 @dataclass(frozen=True)
 class EvalMetrics:
-    tool_call_accuracy: float
+    sql_execution_accuracy: float
     query_correctness: float
     overall_score: float
 
@@ -26,14 +30,16 @@ class EvalResult:
     question: str
     metrics: EvalMetrics
     passed: bool
-    actual_sql: str
+    actual_sql: str | None
     expected_sql: str
     actual_trace_steps: tuple[str, ...]
-    expected_trace_steps: tuple[str, ...]
+    error_type: str | None
+    error_message: str | None
     details: tuple[str, ...]
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """Create the CLI parser for selecting eval cases and output format."""
     parser = argparse.ArgumentParser(
         prog="python -m evals.harness",
         description="Run AskData eval cases against the Data Engineer agent.",
@@ -53,6 +59,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def normalize_dataframe(dataframe: pd.DataFrame) -> pd.DataFrame:
+    """Standardize column names and numeric dtypes before comparing results."""
     normalized = dataframe.copy()
     normalized.columns = [f"column_{index}" for index in range(len(normalized.columns))]
     for column in normalized.select_dtypes(include="number").columns:
@@ -60,34 +67,17 @@ def normalize_dataframe(dataframe: pd.DataFrame) -> pd.DataFrame:
     return normalized.reset_index(drop=True)
 
 
-def score_tool_call_accuracy(
-    actual_steps: tuple[str, ...], expected_steps: tuple[str, ...]
-) -> float:
-    if not actual_steps and not expected_steps:
-        return 1.0
-
-    if not actual_steps or not expected_steps:
-        return 0.0
-
-    longest_common_subsequence = [[0] * (len(expected_steps) + 1)]
-    for actual_step in actual_steps:
-        current_row = [0]
-        for index, expected_step in enumerate(expected_steps, start=1):
-            if actual_step == expected_step:
-                current_row.append(longest_common_subsequence[-1][index - 1] + 1)
-            else:
-                current_row.append(
-                    max(current_row[-1], longest_common_subsequence[-1][index])
-                )
-        longest_common_subsequence.append(current_row)
-
-    total_positions = max(len(actual_steps), len(expected_steps))
-    return longest_common_subsequence[-1][-1] / total_positions
+def score_sql_execution(error: Exception | None) -> tuple[float, tuple[str, ...]]:
+    """Score whether the generated SQL validated and executed successfully."""
+    if error is None:
+        return 1.0, ()
+    return 0.0, (f"{type(error).__name__}: {error}",)
 
 
 def score_query_correctness(
     actual: pd.DataFrame, expected: pd.DataFrame
 ) -> tuple[float, tuple[str, ...]]:
+    """Compare actual and expected DataFrames and return a score plus mismatch details."""
     normalized_actual = normalize_dataframe(actual)
     normalized_expected = normalize_dataframe(expected)
 
@@ -111,26 +101,39 @@ def run_eval_case(
     agent_factory: Callable[[], DataEngineerAgent] | None = None,
     database: OrdersDatabase | None = None,
 ) -> EvalResult:
+    """Run one eval case end to end and aggregate trace and query metrics."""
     database = database or OrdersDatabase()
     agent = agent_factory() if agent_factory else DataEngineerAgent(database=database)
-    result: QueryExecutionResult = agent.run(case.question)
     expected_dataframe = database.execute_query(case.reference_sql)
 
-    actual_trace_steps = tuple(step.name for step in result.trace)
-    tool_call_accuracy = score_tool_call_accuracy(
-        actual_trace_steps, case.expected_trace_steps
-    )
-    query_correctness, query_details = score_query_correctness(
-        result.dataframe, expected_dataframe
-    )
-    overall_score = (tool_call_accuracy + query_correctness) / 2
+    run_error: Exception | None = None
+    result: QueryExecutionResult | None = None
+    actual_sql: str | None = None
+    actual_trace_steps: tuple[str, ...] = ()
 
-    details = query_details
-    if tool_call_accuracy < 1.0:
-        details = details + (
-            "Expected trace steps "
-            f"{case.expected_trace_steps} but saw {actual_trace_steps}.",
+    try:
+        result = agent.run(case.question)
+        actual_sql = result.sql
+        actual_trace_steps = tuple(step.name for step in result.trace)
+    except DataEngineerAgentError as error:
+        run_error = error
+        actual_sql = error.sql
+        actual_trace_steps = tuple(step.name for step in error.trace)
+    except Exception as error:
+        run_error = error
+
+    sql_execution_accuracy, sql_execution_details = score_sql_execution(run_error)
+    if result is None:
+        query_correctness = 0.0
+        query_details = ()
+    else:
+        query_correctness, query_details = score_query_correctness(
+            result.dataframe, expected_dataframe
         )
+
+    overall_score = (sql_execution_accuracy + query_correctness) / 2
+
+    details = sql_execution_details + query_details
     if case.expected_order_by and "DataFrame.iloc" in " ".join(query_details):
         details = details + (
             "Expected row ordering "
@@ -141,20 +144,22 @@ def run_eval_case(
         case_name=case.name,
         question=case.question,
         metrics=EvalMetrics(
-            tool_call_accuracy=tool_call_accuracy,
+            sql_execution_accuracy=sql_execution_accuracy,
             query_correctness=query_correctness,
             overall_score=overall_score,
         ),
-        passed=tool_call_accuracy == 1.0 and query_correctness == 1.0,
-        actual_sql=result.sql,
+        passed=sql_execution_accuracy == 1.0 and query_correctness == 1.0,
+        actual_sql=actual_sql,
         expected_sql=case.reference_sql,
         actual_trace_steps=actual_trace_steps,
-        expected_trace_steps=case.expected_trace_steps,
+        error_type=type(run_error).__name__ if run_error else None,
+        error_message=str(run_error) if run_error else None,
         details=details,
     )
 
 
 def select_cases(case_names: list[str] | None) -> tuple[EvalCase, ...]:
+    """Filter the default eval registry and reject unknown case names early."""
     if not case_names:
         return DEFAULT_EVAL_CASES
 
@@ -166,6 +171,7 @@ def select_cases(case_names: list[str] | None) -> tuple[EvalCase, ...]:
 
 
 def run_eval_suite(case_names: list[str] | None = None) -> tuple[EvalResult, ...]:
+    """Run the selected eval cases against one shared database instance."""
     database = OrdersDatabase()
     database.ensure_exists()
     return tuple(
@@ -174,35 +180,38 @@ def run_eval_suite(case_names: list[str] | None = None) -> tuple[EvalResult, ...
 
 
 def _result_to_dict(result: EvalResult) -> dict[str, Any]:
+    """Serialize an EvalResult dataclass tree into plain dictionaries."""
     payload = asdict(result)
     payload["metrics"] = asdict(result.metrics)
     return payload
 
 
 def _format_summary(results: tuple[EvalResult, ...]) -> str:
-    lines = [
-        "case | tool_call_accuracy | query_correctness | overall_score | passed",
-        "-" * 72,
+    """Render a DataFrame-style summary table for terminal eval output."""
+    rows = [
+        {
+            "case": result.case_name,
+            "sql_exec": f"{result.metrics.sql_execution_accuracy:.2f}",
+            "correctness": f"{result.metrics.query_correctness:.2f}",
+            "overall": f"{result.metrics.overall_score:.2f}",
+            "passed": "✓" if result.passed else "✗",
+        }
+        for result in results
     ]
+    summary_df = pd.DataFrame(rows).set_index("case")
+    lines = [summary_df.to_string()]
+
     for result in results:
-        lines.append(
-            " | ".join(
-                [
-                    result.case_name,
-                    f"{result.metrics.tool_call_accuracy:.2f}",
-                    f"{result.metrics.query_correctness:.2f}",
-                    f"{result.metrics.overall_score:.2f}",
-                    "yes" if result.passed else "no",
-                ]
-            )
-        )
         if result.details:
+            lines.append(f"\n{result.case_name}:")
             for detail in result.details:
-                lines.append(f"  detail: {detail}")
+                lines.append(f"  {detail}")
+
     return "\n".join(lines)
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Parse CLI arguments, run evals, and print either JSON or a text summary."""
     parser = build_parser()
     args = parser.parse_args(argv)
 

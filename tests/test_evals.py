@@ -3,16 +3,17 @@ from __future__ import annotations
 import unittest
 
 from askdata.agents import DataEngineerAgent
-from askdata.database import OrdersDatabase
-from askdata.validator import SqlValidator
+from askdata.sql.validator import SqlValidator
+from askdata.storage.database import OrdersDatabase
 from evals.cases import EvalCase
-from evals.harness import run_eval_case, score_tool_call_accuracy
+from evals.harness import run_eval_case
 from tests.test_agent import FakeLlm
 
 
 class EvalHarnessTestCase(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
+        """Prepare a reusable database fixture or skip when it does not exist."""
         cls.database = OrdersDatabase()
         try:
             cls.database.ensure_exists()
@@ -20,6 +21,7 @@ class EvalHarnessTestCase(unittest.TestCase):
             raise unittest.SkipTest(str(error)) from error
 
     def test_scores_perfect_match_for_correct_query_and_trace(self) -> None:
+        """Verify a matching query and expected trace produce a fully passing eval."""
         case = EvalCase(
             name="orders_by_status",
             question="How many orders do we have by status? Order by the most frequent",
@@ -42,10 +44,11 @@ class EvalHarnessTestCase(unittest.TestCase):
         )
 
         self.assertTrue(result.passed)
-        self.assertEqual(1.0, result.metrics.tool_call_accuracy)
+        self.assertEqual(1.0, result.metrics.sql_execution_accuracy)
         self.assertEqual(1.0, result.metrics.query_correctness)
 
     def test_scores_query_mismatch_when_result_differs_from_reference(self) -> None:
+        """Verify result mismatches zero out query correctness even with the right trace."""
         case = EvalCase(
             name="orders_by_status",
             question="How many orders do we have by status? Order by the most frequent",
@@ -72,10 +75,11 @@ class EvalHarnessTestCase(unittest.TestCase):
         )
 
         self.assertFalse(result.passed)
-        self.assertEqual(1.0, result.metrics.tool_call_accuracy)
+        self.assertEqual(1.0, result.metrics.sql_execution_accuracy)
         self.assertEqual(0.0, result.metrics.query_correctness)
 
     def test_scores_query_mismatch_when_row_order_differs_from_reference(self) -> None:
+        """Verify row ordering differences are reported when ordered outputs do not match."""
         case = EvalCase(
             name="orders_by_status",
             question="How many orders do we have by status? Order by the most frequent",
@@ -108,6 +112,7 @@ class EvalHarnessTestCase(unittest.TestCase):
         )
 
     def test_scores_perfect_match_when_only_column_aliases_differ(self) -> None:
+        """Verify alias-only differences do not change the result correctness score."""
         case = EvalCase(
             name="orders_by_status",
             question="How many orders do we have by status? Order by the most frequent",
@@ -136,13 +141,35 @@ class EvalHarnessTestCase(unittest.TestCase):
         self.assertTrue(result.passed)
         self.assertEqual(1.0, result.metrics.query_correctness)
 
-    def test_scores_partial_tool_accuracy_for_wrong_trace_order(self) -> None:
-        accuracy = score_tool_call_accuracy(
-            ("generate_sql", "get_schema_summary", "execute_query"),
-            ("get_schema_summary", "generate_sql", "validate_sql", "execute_query"),
+    def test_scores_invalid_sql_as_execution_failure(self) -> None:
+        """Verify invalid SQL is captured as an execution failure instead of a trace miss."""
+        case = EvalCase(
+            name="orders_by_status",
+            question="How many orders do we have by status? Order by the most frequent",
+            reference_sql=(
+                "SELECT order_status, COUNT(*) AS order_count "
+                "FROM orders GROUP BY order_status "
+                "ORDER BY order_count DESC, order_status ASC"
+            ),
+            expected_order_by=("order_count DESC", "order_status ASC"),
         )
 
-        self.assertEqual(0.5, accuracy)
+        result = run_eval_case(
+            case,
+            agent_factory=lambda: DataEngineerAgent(
+                database=self.database,
+                validator=SqlValidator(self.database),
+                llm=FakeLlm("SELECT missing_column FROM orders"),
+            ),
+            database=self.database,
+        )
+
+        self.assertFalse(result.passed)
+        self.assertEqual(0.0, result.metrics.sql_execution_accuracy)
+        self.assertEqual(0.0, result.metrics.query_correctness)
+        self.assertEqual("SELECT missing_column FROM orders", result.actual_sql)
+        self.assertEqual("DataEngineerAgentError", result.error_type)
+        self.assertIn("validate_sql_error", result.actual_trace_steps)
 
 
 if __name__ == "__main__":

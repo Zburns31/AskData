@@ -40,6 +40,10 @@ The first version should run locally from the CLI and use the existing SQLite da
 - Web app integration
 - Fully autonomous chart selection for every possible question
 
+## V2 Goals
+- Implement LLM as a judge to score agent generated sql
+- Switch to using local models via Ollama
+
 ### 1. The Data Engineer Agent
 
 - **Role:** Translates the user's natural language request into a precise SQL query.

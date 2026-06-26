@@ -9,8 +9,8 @@ import pandas as pd
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_google_genai import ChatGoogleGenerativeAI
 
-from askdata.database import OrdersDatabase
-from askdata.validator import SqlValidator
+from askdata.sql.validator import SqlValidator
+from askdata.storage.database import OrdersDatabase
 
 DEFAULT_GOOGLE_MODEL = "gemini-2.5-flash"
 
@@ -30,7 +30,17 @@ class QueryExecutionResult:
 
 
 class DataEngineerAgentError(RuntimeError):
-    pass
+    def __init__(
+        self,
+        message: str,
+        *,
+        sql: str | None = None,
+        trace: tuple[AgentTraceStep, ...] = (),
+    ) -> None:
+        """Capture the attempted SQL and trace context for eval reporting."""
+        super().__init__(message)
+        self.sql = sql
+        self.trace = trace
 
 
 class DataEngineerAgent:
@@ -41,11 +51,13 @@ class DataEngineerAgent:
         llm: Any | None = None,
         model: str | None = None,
     ) -> None:
+        """Wire together the database, validator, and LLM used for question answering."""
         self.database = database or OrdersDatabase()
         self.validator = validator or SqlValidator(self.database)
         self.llm = llm or self._build_default_llm(model)
 
     def run(self, question: str) -> QueryExecutionResult:
+        """Translate a natural-language question into SQL, validate it, and run it."""
         normalized_question = question.strip()
         if not normalized_question:
             raise ValueError("Question must not be empty.")
@@ -53,11 +65,34 @@ class DataEngineerAgent:
         trace: list[AgentTraceStep] = []
         schema_summary = self.database.get_schema_summary()
         trace.append(AgentTraceStep(name="get_schema_summary", payload=schema_summary))
-        sql_candidate = self._generate_sql(normalized_question, schema_summary)
+        try:
+            sql_candidate = self._generate_sql(normalized_question, schema_summary)
+        except Exception as error:
+            trace.append(AgentTraceStep(name="generate_sql_error", payload=str(error)))
+            raise DataEngineerAgentError(
+                f"SQL generation failed: {error}",
+                trace=tuple(trace),
+            ) from error
         trace.append(AgentTraceStep(name="generate_sql", payload=sql_candidate))
-        validated_query = self.validator.validate(sql_candidate)
+        try:
+            validated_query = self.validator.validate(sql_candidate)
+        except Exception as error:
+            trace.append(AgentTraceStep(name="validate_sql_error", payload=str(error)))
+            raise DataEngineerAgentError(
+                f"Generated SQL failed validation: {error}",
+                sql=sql_candidate,
+                trace=tuple(trace),
+            ) from error
         trace.append(AgentTraceStep(name="validate_sql", payload=validated_query.sql))
-        dataframe = self.database.execute_query(validated_query.sql)
+        try:
+            dataframe = self.database.execute_query(validated_query.sql)
+        except Exception as error:
+            trace.append(AgentTraceStep(name="execute_query_error", payload=str(error)))
+            raise DataEngineerAgentError(
+                f"Validated SQL failed during execution: {error}",
+                sql=validated_query.sql,
+                trace=tuple(trace),
+            ) from error
         trace.append(AgentTraceStep(name="execute_query", payload=validated_query.sql))
 
         return QueryExecutionResult(
@@ -68,6 +103,7 @@ class DataEngineerAgent:
         )
 
     def _build_default_llm(self, model: str | None) -> ChatGoogleGenerativeAI:
+        """Create the default Gemini client after confirming credentials are present."""
         if not os.getenv("GOOGLE_API_KEY"):
             raise DataEngineerAgentError(
                 "GOOGLE_API_KEY is not set. Export it before running askdata."
@@ -78,6 +114,7 @@ class DataEngineerAgent:
         )
 
     def _generate_sql(self, question: str, schema_summary: str) -> str:
+        """Prompt the LLM with schema context and extract the SQL-only answer."""
         messages = [
             SystemMessage(
                 content=(
@@ -103,6 +140,7 @@ class DataEngineerAgent:
         return sql
 
     def _response_to_text(self, response: Any) -> str:
+        """Normalize different LangChain response shapes into one stripped text string."""
         content = getattr(response, "content", response)
         if isinstance(content, str):
             return content.strip()
@@ -117,6 +155,7 @@ class DataEngineerAgent:
         return str(content).strip()
 
     def _extract_sql(self, content: str) -> str:
+        """Handle fenced output and return the first SELECT or WITH statement found."""
         if content.strip() == "CANNOT_ANSWER":
             return "CANNOT_ANSWER"
 

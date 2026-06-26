@@ -3,26 +3,30 @@ from __future__ import annotations
 import unittest
 
 from askdata.agents import DataEngineerAgent
-from askdata.database import OrdersDatabase
-from askdata.validator import SqlValidator
+from askdata.sql.validator import SqlValidator
+from askdata.storage.database import OrdersDatabase
 
 
 class FakeResponse:
     def __init__(self, content: str) -> None:
+        """Store fake model output in the attribute shape LangChain responses use."""
         self.content = content
 
 
 class FakeLlm:
     def __init__(self, content: str) -> None:
+        """Capture the canned response text returned for every invocation."""
         self.content = content
 
     def invoke(self, messages: object) -> FakeResponse:
+        """Ignore prompt messages and return the preconfigured fake response."""
         return FakeResponse(self.content)
 
 
 class DataEngineerAgentTestCase(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
+        """Skip the suite when the fixture database has not been generated yet."""
         cls.database = OrdersDatabase()
         try:
             cls.database.ensure_exists()
@@ -30,6 +34,7 @@ class DataEngineerAgentTestCase(unittest.TestCase):
             raise unittest.SkipTest(str(error)) from error
 
     def test_executes_validated_sql_from_llm_output(self) -> None:
+        """Verify the agent validates generated SQL, executes it, and records its trace."""
         agent = DataEngineerAgent(
             database=self.database,
             validator=SqlValidator(self.database),
@@ -54,6 +59,7 @@ class DataEngineerAgentTestCase(unittest.TestCase):
         )
 
     def test_extracts_sql_from_fenced_response(self) -> None:
+        """Verify fenced SQL is unwrapped before validation adds the default LIMIT."""
         agent = DataEngineerAgent(
             database=self.database,
             validator=SqlValidator(self.database),

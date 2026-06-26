@@ -8,7 +8,7 @@ from urllib.parse import quote
 
 import pandas as pd
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_DB_PATH = PROJECT_ROOT / "data" / "orders.db"
 
 
@@ -27,9 +27,11 @@ class DatabaseError(RuntimeError):
 
 class OrdersDatabase:
     def __init__(self, db_path: Path | None = None) -> None:
+        """Store the SQLite database path used by later read-only operations."""
         self.db_path = db_path or DEFAULT_DB_PATH
 
     def ensure_exists(self) -> None:
+        """Fail fast when the expected SQLite file has not been created yet."""
         if not self.db_path.exists():
             raise FileNotFoundError(
                 f"Could not find SQLite database at {self.db_path}. "
@@ -37,6 +39,7 @@ class OrdersDatabase:
             )
 
     def connect(self) -> sqlite3.Connection:
+        """Open a read-only SQLite connection configured to return row objects."""
         self.ensure_exists()
         db_uri = f"file:{quote(str(self.db_path))}?mode=ro"  # Readonly
         connection = sqlite3.connect(db_uri, uri=True)
@@ -44,6 +47,7 @@ class OrdersDatabase:
         return connection
 
     def list_tables(self) -> list[str]:
+        """Query sqlite_master and return table names in deterministic order."""
         with self.connect() as connection:
             rows = connection.execute("""
                 SELECT name
@@ -54,6 +58,7 @@ class OrdersDatabase:
         return [str(row["name"]) for row in rows]
 
     def get_table_schema(self, table_name: str) -> list[ColumnInfo]:
+        """Read PRAGMA metadata for one table and map each row into ColumnInfo."""
         with self.connect() as connection:
             rows = connection.execute(f"PRAGMA table_info({table_name})").fetchall()
 
@@ -74,12 +79,14 @@ class OrdersDatabase:
         ]
 
     def get_schema_map(self) -> dict[str, list[ColumnInfo]]:
+        """Build a table-to-columns mapping by inspecting every discovered table."""
         return {
             table_name: self.get_table_schema(table_name)
             for table_name in self.list_tables()
         }
 
     def get_schema_summary(self) -> str:
+        """Render the schema map into a compact text summary for prompt context."""
         lines: list[str] = []
         for table_name, columns in self.get_schema_map().items():
             column_summary = ", ".join(
@@ -91,5 +98,6 @@ class OrdersDatabase:
     def execute_query(
         self, sql: str, parameters: dict[str, Any] | None = None
     ) -> pd.DataFrame:
+        """Execute a validated SQL query and return the result as a DataFrame."""
         with self.connect() as connection:
             return pd.read_sql_query(sql, connection, params=parameters or {})

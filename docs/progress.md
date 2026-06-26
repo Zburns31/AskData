@@ -12,3 +12,5 @@
 - Added an `evals/` harness with starter cases for delivery-time and order-status questions, scoring tool-call accuracy from agent traces and query correctness against reference SQL outputs.
 - Added focused tests for the eval harness and documented how to run the suite plus JSON output mode.
 - Tightened eval ordering semantics by replacing the old comparison sort metadata with explicit expected ordering and by preserving row order during DataFrame comparison.
+- Added function-level docstrings across the source, eval, script, and test modules to document responsibilities and key implementation behavior.
+- Replaced the old trace-similarity eval metric with SQL execution accuracy, so evals now report when generated SQL fails validation or execution and preserve the attempted SQL plus failure stage for debugging.

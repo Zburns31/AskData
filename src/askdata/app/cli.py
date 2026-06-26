@@ -4,11 +4,12 @@ import argparse
 import sys
 
 from askdata.agents import DataEngineerAgent, DataEngineerAgentError
-from askdata.database import DatabaseError
-from askdata.validator import SqlValidationError
+from askdata.sql.validator import SqlValidationError
+from askdata.storage.database import DatabaseError
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """Create the CLI parser for a single natural-language analytics question."""
     parser = argparse.ArgumentParser(
         prog="askdata",
         description="Translate a question into SQL and execute it against orders.db.",
@@ -20,6 +21,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Run the CLI flow, printing SQL and query results or a user-facing error."""
     parser = build_parser()
     args = parser.parse_args(argv)
     question = " ".join(args.question).strip()
