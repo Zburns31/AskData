@@ -1,3 +1,7 @@
+"""
+TODO: Use LLM as a judge to score the correctness of the SQL query and the results, instead of relying on a reference SQL query.
+"""
+
 from __future__ import annotations
 
 import argparse
@@ -13,7 +17,7 @@ from askdata.agents import (
     DataEngineerAgentError,
     QueryExecutionResult,
 )
-from askdata.storage.database import OrdersDatabase
+from askdata.storage.database import SQLiteDatabase
 from evals.cases import DEFAULT_EVAL_CASES, EvalCase
 
 
@@ -99,10 +103,10 @@ def score_query_correctness(
 def run_eval_case(
     case: EvalCase,
     agent_factory: Callable[[], DataEngineerAgent] | None = None,
-    database: OrdersDatabase | None = None,
+    database: SQLiteDatabase | None = None,
 ) -> EvalResult:
     """Run one eval case end to end and aggregate trace and query metrics."""
-    database = database or OrdersDatabase()
+    database = database or SQLiteDatabase()
     agent = agent_factory() if agent_factory else DataEngineerAgent(database=database)
     expected_dataframe = database.execute_query(case.reference_sql)
 
@@ -172,7 +176,7 @@ def select_cases(case_names: list[str] | None) -> tuple[EvalCase, ...]:
 
 def run_eval_suite(case_names: list[str] | None = None) -> tuple[EvalResult, ...]:
     """Run the selected eval cases against one shared database instance."""
-    database = OrdersDatabase()
+    database = SQLiteDatabase()
     database.ensure_exists()
     return tuple(
         run_eval_case(case, database=database) for case in select_cases(case_names)

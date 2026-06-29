@@ -4,7 +4,7 @@ import re
 import sqlite3
 from dataclasses import dataclass
 
-from askdata.storage.database import OrdersDatabase
+from askdata.storage.database import SQLiteDatabase
 
 FORBIDDEN_KEYWORDS = {
     "insert",
@@ -36,7 +36,7 @@ class ValidatedQuery:
 
 
 class SqlValidator:
-    def __init__(self, database: OrdersDatabase, default_limit: int = 200) -> None:
+    def __init__(self, database: SQLiteDatabase, default_limit: int = 200) -> None:
         """Bind the database used for schema checks and the fallback row limit."""
         self.database = database
         self.default_limit = default_limit

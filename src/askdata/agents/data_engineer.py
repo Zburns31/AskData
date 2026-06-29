@@ -10,9 +10,9 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_google_genai import ChatGoogleGenerativeAI
 
 from askdata.sql.validator import SqlValidator
-from askdata.storage.database import OrdersDatabase
+from askdata.storage.database import SQLiteDatabase
 
-DEFAULT_GOOGLE_MODEL = "gemini-2.5-flash"
+DEFAULT_GOOGLE_MODEL = "gemini-3.1-flash-lite"
 
 
 @dataclass(frozen=True)
@@ -46,13 +46,13 @@ class DataEngineerAgentError(RuntimeError):
 class DataEngineerAgent:
     def __init__(
         self,
-        database: OrdersDatabase | None = None,
+        database: SQLiteDatabase | None = None,
         validator: SqlValidator | None = None,
         llm: Any | None = None,
         model: str | None = None,
     ) -> None:
         """Wire together the database, validator, and LLM used for question answering."""
-        self.database = database or OrdersDatabase()
+        self.database = database or SQLiteDatabase()
         self.validator = validator or SqlValidator(self.database)
         self.llm = llm or self._build_default_llm(model)
 

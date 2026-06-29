@@ -3,14 +3,14 @@ from __future__ import annotations
 import sqlite3
 import unittest
 
-from askdata.storage.database import OrdersDatabase
+from askdata.storage.database import SQLiteDatabase
 
 
-class OrdersDatabaseTestCase(unittest.TestCase):
+class SQLiteDatabaseTestCase(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         """Prepare the shared database handle or skip when the fixture is missing."""
-        cls.database = OrdersDatabase()
+        cls.database = SQLiteDatabase()
         try:
             cls.database.ensure_exists()
         except FileNotFoundError as error:

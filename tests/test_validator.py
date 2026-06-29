@@ -3,14 +3,14 @@ from __future__ import annotations
 import unittest
 
 from askdata.sql.validator import SqlValidationError, SqlValidator
-from askdata.storage.database import OrdersDatabase
+from askdata.storage.database import SQLiteDatabase
 
 
 class SqlValidatorTestCase(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         """Create the validator fixture once or skip when the SQLite DB is absent."""
-        cls.database = OrdersDatabase()
+        cls.database = SQLiteDatabase()
         try:
             cls.database.ensure_exists()
         except FileNotFoundError as error:

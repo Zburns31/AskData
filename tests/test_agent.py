@@ -4,7 +4,7 @@ import unittest
 
 from askdata.agents import DataEngineerAgent
 from askdata.sql.validator import SqlValidator
-from askdata.storage.database import OrdersDatabase
+from askdata.storage.database import SQLiteDatabase
 
 
 class FakeResponse:
@@ -27,7 +27,7 @@ class DataEngineerAgentTestCase(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         """Skip the suite when the fixture database has not been generated yet."""
-        cls.database = OrdersDatabase()
+        cls.database = SQLiteDatabase()
         try:
             cls.database.ensure_exists()
         except FileNotFoundError as error:

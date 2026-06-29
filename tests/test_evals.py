@@ -4,7 +4,7 @@ import unittest
 
 from askdata.agents import DataEngineerAgent
 from askdata.sql.validator import SqlValidator
-from askdata.storage.database import OrdersDatabase
+from askdata.storage.database import SQLiteDatabase
 from evals.cases import EvalCase
 from evals.harness import run_eval_case
 from tests.test_agent import FakeLlm
@@ -14,7 +14,7 @@ class EvalHarnessTestCase(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         """Prepare a reusable database fixture or skip when it does not exist."""
-        cls.database = OrdersDatabase()
+        cls.database = SQLiteDatabase()
         try:
             cls.database.ensure_exists()
         except FileNotFoundError as error:

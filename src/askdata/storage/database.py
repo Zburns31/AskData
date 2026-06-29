@@ -9,7 +9,7 @@ from urllib.parse import quote
 import pandas as pd
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
-DEFAULT_DB_PATH = PROJECT_ROOT / "data" / "orders.db"
+DEFAULT_DB_PATH = PROJECT_ROOT / "data" / "askdata.db"
 
 
 @dataclass(frozen=True)
@@ -25,7 +25,7 @@ class DatabaseError(RuntimeError):
     pass
 
 
-class OrdersDatabase:
+class SQLiteDatabase:
     def __init__(self, db_path: Path | None = None) -> None:
         """Store the SQLite database path used by later read-only operations."""
         self.db_path = db_path or DEFAULT_DB_PATH
