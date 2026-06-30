@@ -85,6 +85,47 @@ class SQLiteDatabase:
             for table_name in self.list_tables()
         }
 
+    def get_schema_relationships(self) -> list[str]:
+        """Auto-detect JOIN relationships by matching shared column names across tables.
+
+        For each column name that appears in more than one table, the table whose
+        column is flagged as a primary key is treated as the "primary" side of the
+        join.  Where no primary key is flagged, the first table in alphabetical order
+        is used as the left side so the output is deterministic.
+        """
+        schema_map = self.get_schema_map()
+
+        # Map column_name → list of (table_name, is_primary_key)
+        col_to_tables: dict[str, list[tuple[str, bool]]] = {}
+        for table_name, columns in schema_map.items():
+            for col in columns:
+                col_to_tables.setdefault(col.name, []).append(
+                    (table_name, col.is_primary_key)
+                )
+
+        relationships: list[str] = []
+        seen: set[frozenset[str]] = set()
+        for col_name, table_entries in col_to_tables.items():
+            if len(table_entries) < 2:
+                continue
+            # Identify the primary (PK) table; fall back to alphabetical first
+            pk_tables = [t for t, is_pk in table_entries if is_pk]
+            all_tables = sorted(t for t, _ in table_entries)
+            primary = pk_tables[0] if pk_tables else all_tables[0]
+            for other_table, _ in table_entries:
+                if other_table == primary:
+                    continue
+                pair = frozenset({primary, other_table})
+                if pair in seen:
+                    continue
+                seen.add(pair)
+                relationships.append(
+                    f"- {primary} JOIN {other_table}"
+                    f" ON {primary}.{col_name} = {other_table}.{col_name}"
+                )
+
+        return sorted(relationships)
+
     def get_schema_summary(self) -> str:
         """Render the schema map into a compact text summary for prompt context."""
         lines: list[str] = []
@@ -93,6 +134,12 @@ class SQLiteDatabase:
                 f"{column.name} {column.data_type}" for column in columns
             )
             lines.append(f"- {table_name}: {column_summary}")
+
+        relationships = self.get_schema_relationships()
+        if relationships:
+            lines.append("\nRelationships:")
+            lines.extend(relationships)
+
         return "\n".join(lines)
 
     def execute_query(

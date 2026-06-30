@@ -18,8 +18,8 @@ class FakeLlm:
         """Capture the canned response text returned for every invocation."""
         self.content = content
 
-    def invoke(self, messages: object) -> FakeResponse:
-        """Ignore prompt messages and return the preconfigured fake response."""
+    def invoke(self, messages: object, **kwargs: object) -> FakeResponse:
+        """Ignore prompt messages and kwargs (e.g., config) and return the preconfigured fake response."""
         return FakeResponse(self.content)
 
 
@@ -50,6 +50,7 @@ class DataEngineerAgentTestCase(unittest.TestCase):
         self.assertIn("GROUP BY order_status", result.sql)
         self.assertEqual(
             [
+                "thinking_level",
                 "get_schema_summary",
                 "generate_sql",
                 "validate_sql",
